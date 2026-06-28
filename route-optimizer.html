@@ -1,0 +1,1317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>巡回ルート編成 — 工事班向け訪問順最適化</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<style>
+  /* ============ TOKENS ============ */
+  :root{
+    --charcoal: #1F2A24;
+    --charcoal-soft: #2A3830;
+    --paper: #F7F5EF;
+    --paper-dim: #ECE8DC;
+    --orange: #E8622C;
+    --orange-deep: #C44E1F;
+    --teal: #2D6E5E;
+    --teal-soft: #DCE8E2;
+    --slate: #6B7472;
+    --line: #D8D2C0;
+    --ok: #2D6E5E;
+    --warn: #C44E1F;
+    --shadow: 0 2px 0 rgba(31,42,36,0.08);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--charcoal);
+    font-family:'Inter', sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  .stamp{font-family:'Barlow Condensed', sans-serif; font-weight:800; letter-spacing:0.01em;}
+  .mono{font-family:'JetBrains Mono', monospace;}
+
+  /* ============ LAYOUT SHELL ============ */
+  #app{max-width:640px; margin:0 auto; min-height:100vh; background:var(--paper); position:relative; padding-bottom:48px;}
+
+  header.bar{
+    position:sticky; top:0; z-index:40;
+    background:var(--charcoal); color:var(--paper);
+    padding:14px 16px 12px;
+    border-bottom:3px solid var(--orange);
+  }
+  header.bar .row{display:flex; align-items:baseline; justify-content:space-between; gap:10px;}
+  header.bar h1{
+    font-size:19px; margin:0; letter-spacing:0.02em; text-transform:uppercase;
+    font-weight:800;
+  }
+  header.bar .sub{
+    font-size:11px; color:#B9C4BC; margin-top:2px; letter-spacing:0.03em;
+  }
+  .badge-count{
+    font-family:'JetBrains Mono', monospace; font-size:12px; background:var(--orange);
+    color:var(--charcoal); padding:3px 8px; border-radius:3px; font-weight:600; white-space:nowrap;
+  }
+
+  main{padding:16px;}
+  section{margin-bottom:18px;}
+
+  .panel{
+    background:#fff; border:1px solid var(--line); border-radius:10px;
+    padding:16px; box-shadow:var(--shadow);
+  }
+  .panel + .panel{margin-top:12px;}
+
+  .eyebrow{
+    font-family:'JetBrains Mono', monospace; font-size:10.5px; letter-spacing:0.08em;
+    text-transform:uppercase; color:var(--orange-deep); font-weight:600; margin:0 0 8px;
+  }
+  h2.title{font-size:16px; margin:0 0 10px; font-weight:700;}
+  p.help{font-size:13px; color:var(--slate); line-height:1.6; margin:0 0 12px;}
+
+  /* ============ UPLOAD ZONE ============ */
+  .dropzone{
+    border:2px dashed var(--line); border-radius:10px; padding:28px 16px;
+    text-align:center; cursor:pointer; transition:border-color .15s, background .15s;
+    background:var(--paper);
+  }
+  .dropzone.drag{border-color:var(--orange); background:#FFF3EC;}
+  .dropzone svg{width:30px; height:30px; color:var(--slate); margin-bottom:8px;}
+  .dropzone .dz-title{font-weight:600; font-size:14px; margin-bottom:4px;}
+  .dropzone .dz-sub{font-size:12px; color:var(--slate);}
+  input[type=file]{display:none;}
+
+  .file-pill{
+    display:flex; align-items:center; gap:10px; background:var(--teal-soft);
+    border:1px solid var(--teal); border-radius:8px; padding:10px 12px; font-size:13px;
+  }
+  .file-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--teal); flex:none;}
+  .file-pill .name{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600;}
+  .file-pill button{
+    background:none; border:none; color:var(--slate); font-size:12px; cursor:pointer;
+    text-decoration:underline; padding:0; flex:none;
+  }
+
+  .text-input{
+    width:100%; padding:11px 12px; border:1.5px solid var(--line); border-radius:8px;
+    font-family:'Inter', sans-serif; font-size:14px; background:#fff; color:var(--charcoal);
+  }
+  .text-input:focus{outline:none; border-color:var(--orange);}
+  .text-input::placeholder{color:#A9A398;}
+
+  /* ============ BUTTONS ============ */
+  button.btn{
+    font-family:'Inter', sans-serif; font-weight:700; font-size:14px;
+    border-radius:8px; border:none; cursor:pointer; padding:13px 18px;
+    transition:transform .08s, opacity .15s;
+  }
+  button.btn:active{transform:scale(0.98);}
+  button.btn:disabled{opacity:0.4; cursor:not-allowed;}
+  .btn-primary{background:var(--orange); color:#fff;}
+  .btn-primary:hover:not(:disabled){background:var(--orange-deep);}
+  .btn-dark{background:var(--charcoal); color:var(--paper);}
+  .btn-ghost{background:transparent; color:var(--charcoal); border:1.5px solid var(--line);}
+  .btn-block{width:100%; display:block;}
+  .btn-row{display:flex; gap:8px;}
+  .btn-row .btn{flex:1;}
+
+  /* ============ PREFECTURE CHIPS ============ */
+  .chip-grid{display:flex; flex-wrap:wrap; gap:8px;}
+  .chip{
+    font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:14px;
+    background:#fff; border:1.5px solid var(--line); border-radius:999px;
+    padding:8px 14px; cursor:pointer; display:flex; align-items:center; gap:6px;
+    color:var(--charcoal); transition:all .12s;
+  }
+  .chip:hover{border-color:var(--charcoal);}
+  .chip.active{background:var(--charcoal); color:var(--paper); border-color:var(--charcoal);}
+  .chip .n{
+    font-family:'JetBrains Mono', monospace; font-size:11px; background:rgba(0,0,0,0.08);
+    padding:1px 6px; border-radius:999px;
+  }
+  .chip.active .n{background:var(--orange); color:var(--charcoal);}
+
+  /* ============ STATUS LINE ============ */
+  .status-line{
+    display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--slate);
+    padding:8px 0;
+  }
+  .status-line .spinner{
+    width:13px; height:13px; border-radius:50%; border:2px solid var(--line);
+    border-top-color:var(--orange); animation:spin 0.7s linear infinite; flex:none;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .progress-track{height:5px; background:var(--paper-dim); border-radius:99px; overflow:hidden; margin-top:6px;}
+  .progress-fill{height:100%; background:var(--orange); border-radius:99px; transition:width .2s;}
+
+  /* ============ MANIFEST (stop list) ============ */
+  .manifest{list-style:none; margin:0; padding:0;}
+  .stop{
+    display:flex; gap:12px; padding:13px 0; border-bottom:1px solid var(--line);
+    position:relative;
+  }
+  .stop:last-child{border-bottom:none;}
+  .stop .seq{
+    flex:none; width:32px; height:32px; border-radius:50%;
+    background:var(--charcoal); color:var(--paper);
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:14px;
+    position:relative;
+  }
+  .stop:first-child .seq{background:var(--orange);}
+  .stop .seq::after{
+    content:''; position:absolute; top:34px; left:50%; width:1.5px; height:calc(100% - 10px);
+    background:var(--line); transform:translateX(-50%);
+  }
+  .stop:last-child .seq::after{display:none;}
+  .stop .body{flex:1; min-width:0;}
+  .stop .shop{font-weight:700; font-size:14.5px; margin-bottom:2px;}
+  .stop .addr{font-size:12.5px; color:var(--slate); line-height:1.5;}
+  .stop .meta{display:flex; gap:10px; margin-top:6px; font-size:11.5px;}
+  .stop .meta span{
+    font-family:'JetBrains Mono', monospace; color:var(--teal); font-weight:600;
+    background:var(--teal-soft); padding:2px 7px; border-radius:4px;
+  }
+  .stop .meta span.warn{color:var(--orange-deep); background:#FFE9DD;}
+  .stop.start .seq{background:var(--charcoal);}
+  .stop.start .shop{color:var(--slate); font-style:italic;}
+
+  /* GPS ping marker for current location row */
+  .ping{position:relative; width:32px; height:32px; flex:none;}
+  .ping::before, .ping::after{
+    content:''; position:absolute; inset:0; border-radius:50%; background:var(--charcoal);
+  }
+  .ping::before{animation:ping 1.8s ease-out infinite;}
+  .ping .core{
+    position:absolute; inset:0; border-radius:50%; background:var(--charcoal); color:var(--paper);
+    display:flex; align-items:center; justify-content:center; font-size:14px;
+  }
+  @keyframes ping{
+    0%{transform:scale(1); opacity:0.5;}
+    100%{transform:scale(1.9); opacity:0;}
+  }
+
+  /* ============ MAP ============ */
+  #map{
+    width:100%; height:320px; border-radius:10px; border:1px solid var(--line);
+    background:var(--paper-dim);
+  }
+
+  /* ============ EMPTY / ERROR STATES ============ */
+  .empty{
+    text-align:center; padding:30px 16px; color:var(--slate); font-size:13px;
+  }
+  .errbox{
+    background:#FFF0EA; border:1px solid var(--orange); border-radius:8px;
+    padding:11px 13px; font-size:12.5px; color:var(--orange-deep); line-height:1.6;
+  }
+
+  /* ============ SUMMARY BAR ============ */
+  .summary{
+    display:flex; gap:10px;
+  }
+  .summary .stat{flex:1; background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:10px 12px; text-align:center;}
+  .summary .stat .val{font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:22px; color:var(--charcoal); line-height:1.1;}
+  .summary .stat .lbl{font-size:10.5px; color:var(--slate); margin-top:2px; letter-spacing:0.02em;}
+
+  .footnote{font-size:11px; color:var(--slate); line-height:1.6; margin-top:10px;}
+
+  a.maplink{
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    text-decoration:none; font-weight:700; font-size:14px;
+  }
+
+  /* ============ DRAG & DROP ============ */
+  .stop.dragging{opacity:0.4;}
+  .stop.drag-over{border-top:2px solid var(--orange);}
+  .drag-handle{
+    cursor:grab; padding:4px 6px; color:var(--slate); flex:none;
+    display:flex; align-items:center; touch-action:none;
+  }
+  .drag-handle:active{cursor:grabbing;}
+  .drag-handle svg{pointer-events:none;}
+
+  /* 道路距離バッジ */
+  .road-badge{
+    display:inline-flex; align-items:center; gap:4px;
+    font-family:'JetBrains Mono',monospace; font-size:11px;
+    background:#EEF4FF; color:#2255CC; border:1px solid #C0D0F0;
+    padding:2px 7px; border-radius:4px; font-weight:600;
+  }
+  .road-badge.loading{background:var(--paper-dim); color:var(--slate); border-color:var(--line);}
+
+  /* サマリー更新ボタン */
+  .btn-sm{
+    font-size:12px; padding:7px 12px; border-radius:6px;
+  }
+
+  @media (max-width:380px){
+    header.bar h1{font-size:16px;}
+    .stop .seq{width:28px;height:28px;font-size:12px;}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="bar">
+    <div class="row">
+      <div>
+        <h1>巡回ルート編成</h1>
+        <div class="sub">店舗リストを取り込み、都道府県ごとに訪問順を組む</div>
+      </div>
+    </div>
+  </header>
+  <main id="main"></main>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  // pdf.js worker
+  if (window['pdfjsLib']) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+</script>
+<script>
+/* ============================================================
+   巡回ルート編成 — app.js
+   - Excel/PDFから店舗リストを読み込み
+   - 国土地理院APIでジオコーディング（緯度経度取得）
+   - 都道府県ごとに現在地起点で訪問順を最適化（最近傍法＋2-opt改善）
+   - Leaflet地図に描画 / Googleマップで開くリンクを生成
+   ============================================================ */
+
+(function () {
+  "use strict";
+
+  // ---------- 状態 ----------
+  const state = {
+    rows: [],            // { no, han, name, kana, pref, addr, note }
+    byPref: new Map(),   // pref -> rows[]
+    selectedPref: null,
+    geocoded: new Map(), // addr -> {lat, lon} cache
+    startMode: "current", // "current" | "custom"
+    currentLoc: null,    // {lat, lon} 直近で使用した出発地点（現在地 or 指定地点）
+    customStart: null,   // {lat, lon} 指定地点のジオコーディング結果
+    customStartLabel: "", // 指定地点の入力テキスト（表示用）
+    searchResults: null,  // 出発地点検索の候補一覧（[{title,lat,lon}]）
+    startLabel: "",       // ルート計算後、実際に使った出発点の表示名
+    route: null,         // ordered stops with distances
+    map: null,
+    markers: [],
+    polyline: null,
+    columnReport: null,  // 列認識レポート
+    osrmCache: new Map(), // "lat1,lon1|lat2,lon2" -> {km, min}
+    dragState: null,      // ドラッグ中の状態
+  };
+
+  const $main = document.getElementById("main");
+
+  // ---------- ユーティリティ ----------
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371; // km
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.asin(Math.sqrt(a));
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // ---------- ファイル解析: Excel ----------
+  async function parseExcelFile(file) {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+    return rowsFromTable(json);
+  }
+
+  // ---------- ファイル解析: PDF ----------
+  // この種の依頼店舗リストPDFは、各セルが1つのテキストランとして独立して
+  // 配置されている（セル内で文字単位に分割されない）ため、列ヘッダーの
+  // x座標を基準にして各テキストランを列に割り当てる方式で読み取る。
+  // トークンを空白で分割する方式は店舗名等に空白を含むケースで誤動作するため使わない。
+  async function parsePdfFile(file) {
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+
+    let headerX = null; // {no, han, name, kana, pref, addr, note} のx座標
+    const records = [];
+
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      const items = content.items
+        .map(it => ({ str: it.str.trim(), x: it.transform[4], y: Math.round(it.transform[5]) }))
+        .filter(it => it.str !== "");
+
+      // 同じy座標（誤差3px以内）の項目を1行としてグルーピング
+      const rows = [];
+      items.forEach(it => {
+        let row = rows.find(r => Math.abs(r.y - it.y) <= 3);
+        if (!row) { row = { y: it.y, cells: [] }; rows.push(row); }
+        row.cells.push(it);
+      });
+      rows.sort((a, b) => b.y - a.y);
+      rows.forEach(r => r.cells.sort((a, b) => a.x - b.x));
+
+      for (const row of rows) {
+        const cells = row.cells;
+        // ヘッダー行を検出してx座標を記録（キーワードを柔軟に）
+        const isHeaderNo = cells.find(c => /^(No|ＮＯ|NO|番号|連番)$/i.test(c.str));
+        const isHeaderAddr = cells.find(c =>
+          c.str.includes("住所") || c.str.includes("所在地") || c.str.includes("アドレス") ||
+          /^(address|addr|location)$/i.test(c.str)
+        );
+        if (isHeaderAddr || (isHeaderNo && cells.length >= 2)) {
+          // ヘッダーらしい行ならx座標を記録
+          const newHeaderX = {};
+          cells.forEach(c => {
+            const s = c.str;
+            if (/^(No|ＮＯ|NO|番号|連番)$/i.test(s))                       newHeaderX.no   = c.x;
+            else if (s.includes("工事班")||s.includes("班")||/^(team|group)$/i.test(s)) newHeaderX.han  = c.x;
+            else if (s.includes("カナ")||s.includes("フリガナ"))             newHeaderX.kana = c.x;
+            else if (s.includes("店舗名")||s.includes("施設名")||s.includes("名称")||
+                     s.includes("店名")||/^(name|names)$/i.test(s))          newHeaderX.name = c.x;
+            else if (s.includes("都道府県")||s.includes("県名")||/^(pref)$/i.test(s)) newHeaderX.pref = c.x;
+            else if (s.includes("住所")||s.includes("所在地")||s.includes("場所")||
+                     /^(addr|address|location)$/i.test(s))                   newHeaderX.addr = c.x;
+            else if (s.includes("備考")||s.includes("メモ")||/^(note|memo)$/i.test(s)) newHeaderX.note = c.x;
+          });
+          if (newHeaderX.addr != null || newHeaderX.name != null) {
+            headerX = newHeaderX;
+          }
+          continue; // ヘッダー行自体はデータとして扱わない
+        }
+        if (!headerX) continue; // ヘッダーがまだ見つかっていない
+        // No列がある場合は数字チェック、ない場合はスキップしない
+        if (headerX.no != null && !/^\d+$/.test(cells[0] && cells[0].str)) continue;
+
+        // 各セルを最も近い列ヘッダーx座標に割り当て
+        const cols = { no: "", han: "", name: "", kana: "", pref: "", addr: "", note: "" };
+        const colKeys = Object.keys(headerX);
+        cells.forEach(c => {
+          let bestKey = null, bestDist = Infinity;
+          for (const k of colKeys) {
+            const d = Math.abs(c.x - headerX[k]);
+            if (d < bestDist) { bestDist = d; bestKey = k; }
+          }
+          if (bestKey) cols[bestKey] = cols[bestKey] ? cols[bestKey] + c.str : c.str;
+        });
+
+        if (!cols.addr) continue;
+        // 都道府県：専用列 → 住所から自動抽出
+        let pref = normalizePref(cols.pref);
+        if (!pref) pref = extractPrefFromAddr(cols.addr);
+        records.push({
+          no: cols.no, han: cols.han, name: cols.name, kana: cols.kana,
+          pref, addr: cols.addr, note: cols.note,
+        });
+      }
+    }
+    return records;
+  }
+
+  // ---------- 住所文字列から都道府県を抽出 ----------
+  const PREFS = [
+    "北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県",
+    "茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県",
+    "新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県",
+    "静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県",
+    "奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県",
+    "徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県",
+    "熊本県","大分県","宮崎県","鹿児島県","沖縄県"
+  ];
+  // 略称（「県」「都」「道」「府」なし）も認識するためのマップ
+  const PREF_SHORT = {};
+  PREFS.forEach(p => {
+    const short = p.replace(/[都道府県]$/, "");
+    PREF_SHORT[short] = p;
+    PREF_SHORT[p] = p;
+  });
+
+  function extractPrefFromAddr(addr) {
+    for (const p of PREFS) {
+      if (addr.startsWith(p)) return p;
+    }
+    // 先頭2〜3文字が略称に一致するか
+    for (const [short, full] of Object.entries(PREF_SHORT)) {
+      if (addr.startsWith(short)) return full;
+    }
+    return "";
+  }
+
+  function normalizePref(p) {
+    if (!p) return p;
+    return PREF_SHORT[p.trim()] || p.trim();
+  }
+
+  // ---------- ヘッダー列を柔軟に検出するヘルパー ----------
+  function detectColumns(header) {
+    // 各列の役割を判定するマッチルール（優先度順に並べる）
+    const rules = {
+      no:   h => /^(no|ｎｏ|№|番号|連番|seq|id)$/i.test(h),
+      han:  h => h.includes("工事班") || h.includes("班") || h.includes("チーム") || /^(team|group)$/i.test(h),
+      kana: h => h.includes("カナ") || h.includes("かな") || h.includes("フリガナ") || /^(kana|furigana)$/i.test(h),
+      name: h => h.includes("店舗名") || h.includes("施設名") || h.includes("名称") || h.includes("店名") ||
+                 h.includes("顧客名") || h.includes("会社名") || /^(name|names|店|施設)$/i.test(h),
+      pref: h => h.includes("都道府県") || h.includes("県名") || h.includes("都府県") || /^(pref|prefecture)$/i.test(h),
+      addr: h => h.includes("住所") || h.includes("所在地") || h.includes("場所") || h.includes("アドレス") ||
+                 /^(addr|address|location)$/i.test(h),
+      note: h => h.includes("備考") || h.includes("メモ") || h.includes("コメント") || h.includes("特記") ||
+                 /^(note|memo|comment|remarks)$/i.test(h),
+    };
+
+    const idx = {};
+    for (const [key, test] of Object.entries(rules)) {
+      idx[key] = header.findIndex(h => test(h.toLowerCase ? h : h));
+    }
+
+    // addr が見つからない場合、最長文字列を含む列を住所として推測
+    if (idx.addr < 0) {
+      // 先頭数行をサンプリングして都道府県名で始まる値を持つ列を探す（後でrowsFromTable内で実施）
+      idx.addr = -1;
+    }
+
+    return idx;
+  }
+
+  // 表形式（配列の配列）から行オブジェクトへ。1行目をヘッダーとみなす。
+  // 列認識レポートを state に保存し、画面に表示できるようにする。
+  function rowsFromTable(json) {
+    if (!json.length) return [];
+    const header = json[0].map(h => String(h).trim());
+    const idx = detectColumns(header);
+
+    // addr がヘッダーから見つからなかった場合、データ行をサンプリングして自動検出
+    if (idx.addr < 0) {
+      const samples = json.slice(1, 6);
+      let bestCol = -1, bestScore = 0;
+      for (let c = 0; c < header.length; c++) {
+        let score = 0;
+        for (const row of samples) {
+          const val = String(row[c] ?? "").trim();
+          if (extractPrefFromAddr(val)) score += 3;
+          else if (val.length > 5 && /[市区町村]/.test(val)) score += 1;
+        }
+        if (score > bestScore) { bestScore = score; bestCol = c; }
+      }
+      if (bestCol >= 0) idx.addr = bestCol;
+    }
+
+    // 列認識レポートを保存（アップロード確認画面で表示）
+    state.columnReport = {
+      headers: header,
+      idx,
+      nameFound: idx.name >= 0,
+      addrFound: idx.addr >= 0,
+      prefFound: idx.pref >= 0,
+    };
+
+    const out = [];
+    for (let i = 1; i < json.length; i++) {
+      const r = json[i];
+      if (!r || r.every(c => String(c).trim() === "")) continue;
+
+      const addr = idx.addr >= 0 ? String(r[idx.addr] ?? "").trim() : "";
+      if (!addr) continue;
+
+      // 都道府県：専用列 → 住所文字列から自動抽出
+      let pref = idx.pref >= 0 ? normalizePref(String(r[idx.pref] ?? "").trim()) : "";
+      if (!pref) pref = extractPrefFromAddr(addr);
+
+      // 店舗名：専用列 → なければ空文字（後でアドレスで補完）
+      const name = idx.name >= 0 ? String(r[idx.name] ?? "").trim() : "";
+
+      out.push({
+        no:   idx.no   >= 0 ? String(r[idx.no]   ?? "").trim() : String(i),
+        han:  idx.han  >= 0 ? String(r[idx.han]  ?? "").trim() : "",
+        name,
+        kana: idx.kana >= 0 ? String(r[idx.kana] ?? "").trim() : "",
+        pref,
+        addr,
+        note: idx.note >= 0 ? String(r[idx.note] ?? "").trim() : "",
+      });
+    }
+    return out;
+  }
+
+  // ---------- 都道府県別グルーピング ----------
+  function groupByPref(rows) {
+    const map = new Map();
+    for (const r of rows) {
+      const key = r.pref || "（都道府県不明）";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(r);
+    }
+    return map;
+  }
+
+  // ---------- 国土地理院ジオコーディング ----------
+  async function geocodeAddress(addr) {
+    if (state.geocoded.has(addr)) return state.geocoded.get(addr);
+    try {
+      const url = "https://msearch.gsi.go.jp/address-search/AddressSearch?q=" + encodeURIComponent(addr);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      if (data && data.length) {
+        const [lon, lat] = data[0].geometry.coordinates;
+        const result = { lat, lon };
+        state.geocoded.set(addr, result);
+        return result;
+      }
+    } catch (e) {
+      console.warn("geocode failed:", addr, e);
+    }
+    state.geocoded.set(addr, null);
+    return null;
+  }
+
+  // 出発地点検索用：候補を複数返す。
+  // 国土地理院のデータベースには住所そのものに加え、役所・駅・主要施設等の
+  // 地名も一部含まれているため、ヒットした候補をすべて提示して選んでもらう。
+  // コンビニ・ガソリンスタンド等の個別店舗名は基本的に収録されていない点に注意。
+  async function searchPlaces(query) {
+    const url = "https://msearch.gsi.go.jp/address-search/AddressSearch?q=" + encodeURIComponent(query);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (!data || !data.length) return [];
+    // 同一座標（または同一タイトル）の重複を除去
+    const seen = new Set();
+    const out = [];
+    for (const item of data) {
+      const title = item.properties && item.properties.title;
+      const coords = item.geometry && item.geometry.coordinates;
+      if (!title || !coords) continue;
+      const key = title + "|" + coords.join(",");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ title, lat: coords[1], lon: coords[0] });
+    }
+    return out.slice(0, 8); // 候補が多すぎる場合は上位8件まで
+  }
+
+  async function geocodeAll(rows, onProgress) {
+    const results = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const g = await geocodeAddress(r.addr);
+      results.push({ ...r, lat: g ? g.lat : null, lon: g ? g.lon : null });
+      onProgress(i + 1, rows.length);
+      await sleep(120); // GSI APIへの配慮（連続リクエスト間隔）
+    }
+    return results;
+  }
+
+  // ---------- ルート最適化: 最近傍法 + 2-opt ----------
+  function optimizeRoute(start, stops) {
+    // stops: [{lat, lon, ...}], start: {lat, lon}
+    const n = stops.length;
+    if (n === 0) return [];
+    if (n === 1) return [0];
+
+    const dist = (a, b) => haversine(a.lat, a.lon, b.lat, b.lon);
+
+    // 最近傍法で初期解
+    const visited = new Array(n).fill(false);
+    const order = [];
+    let cur = start;
+    for (let k = 0; k < n; k++) {
+      let best = -1, bestD = Infinity;
+      for (let i = 0; i < n; i++) {
+        if (visited[i]) continue;
+        const d = dist(cur, stops[i]);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      visited[best] = true;
+      order.push(best);
+      cur = stops[best];
+    }
+
+    // 2-opt改善（開始点固定、パス形式 = 戻らない）
+    function pathLength(ord) {
+      let total = dist(start, stops[ord[0]]);
+      for (let i = 0; i < ord.length - 1; i++) total += dist(stops[ord[i]], stops[ord[i + 1]]);
+      return total;
+    }
+
+    let improved = true;
+    let guard = 0;
+    while (improved && guard < 200) {
+      improved = false;
+      guard++;
+      for (let i = 0; i < order.length - 1; i++) {
+        for (let j = i + 1; j < order.length; j++) {
+          const newOrder = order.slice(0, i).concat(order.slice(i, j + 1).reverse(), order.slice(j + 1));
+          if (pathLength(newOrder) < pathLength(order) - 1e-9) {
+            order.length = 0;
+            order.push(...newOrder);
+            improved = true;
+          }
+        }
+      }
+    }
+    return order;
+  }
+
+  // ---------- OSRM 道路距離・所要時間取得 ----------
+  // 出発点→各ストップ間のlegをOSRM Table APIで一括取得
+  // stops: [{lat,lon,...}], start:{lat,lon}
+  // 戻り値: [{km,min}] stops と同順
+  async function fetchRoadLegs(start, stops) {
+    // 座標リスト: 0=出発, 1..n=各ストップ
+    const coords = [[start.lon, start.lat], ...stops.map(s => [s.lon, s.lat])];
+    const coordStr = coords.map(c => c.join(",")).join(";");
+    // sources=0..n-1 → destinations=1..n（各legの終点）
+    const sources = coords.slice(0, -1).map((_, i) => i).join(";");
+    const destinations = coords.slice(1).map((_, i) => i + 1).join(";");
+    const url = `https://router.project-osrm.org/table/v1/driving/${coordStr}?sources=${sources}&destinations=${destinations}&annotations=duration,distance`;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) throw new Error("OSRM HTTP " + res.status);
+      const data = await res.json();
+      if (data.code !== "Ok") throw new Error("OSRM: " + data.code);
+      // durations[i][0], distances[i][0] がleg iの値
+      return data.durations.map((row, i) => ({
+        km: (data.distances[i][0] / 1000),
+        min: Math.round(row[0] / 60)
+      }));
+    } catch (e) {
+      console.warn("OSRM失敗、直線距離にフォールバック:", e.message);
+      return null; // nullならフォールバック
+    }
+  }
+
+  function buildRoute(start, stops) {
+    const order = optimizeRoute(start, stops);
+    const ordered = order.map(i => stops[i]);
+    let total = 0;
+    let prev = start;
+    const withDist = ordered.map(s => {
+      const d = haversine(prev.lat, prev.lon, s.lat, s.lon);
+      total += d;
+      prev = s;
+      return { ...s, legKm: d };
+    });
+    return { stops: withDist, totalKm: total };
+  }
+
+  // ---------- Googleマップ複数経由地リンク ----------
+  function buildGoogleMapsUrl(start, orderedStops) {
+    const origin = `${start.lat},${start.lon}`;
+    const dest = orderedStops[orderedStops.length - 1];
+    const destination = `${dest.lat},${dest.lon}`;
+    const waypoints = orderedStops.slice(0, -1).map(s => `${s.lat},${s.lon}`).join("|");
+    let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving`;
+    if (waypoints) url += `&waypoints=${encodeURIComponent(waypoints)}`;
+    return url;
+  }
+
+  // ---------- 現在地取得 ----------
+  function getCurrentLocation() {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) { reject(new Error("このブラウザは位置情報に対応していません")); return; }
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+        err => reject(err),
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+      );
+    });
+  }
+
+  // ================== レンダリング ==================
+
+  function render() {
+    if (!state.rows.length) {
+      renderUpload();
+    } else if (!state.selectedPref) {
+      renderPrefSelect();
+    } else if (!state.route) {
+      renderPrefDetail();
+    } else {
+      renderRouteResult();
+    }
+  }
+
+  function renderUpload() {
+    $main.innerHTML = `
+      <section class="panel">
+        <div class="eyebrow">Step 1 — 取り込み</div>
+        <h2 class="title">店舗リストをアップロード</h2>
+        <p class="help">店舗リストの Excel（.xlsx/.csv）または PDF を読み込みます。<b>住所</b>の列があれば動作します。店舗名・都道府県・No・班などの列は自動認識します（なくてもOK）。都道府県列がない場合は住所から自動で判定します。</p>
+        <div class="dropzone" id="dropzone">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
+          <div class="dz-title">タップしてファイルを選択</div>
+          <div class="dz-sub">.xlsx / .xls / .csv / .pdf</div>
+        </div>
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv,.pdf">
+        <div id="uploadStatus"></div>
+      </section>
+    `;
+    const dz = document.getElementById("dropzone");
+    const input = document.getElementById("fileInput");
+    dz.addEventListener("click", () => input.click());
+    ["dragover", "dragleave", "drop"].forEach(evt => {
+      dz.addEventListener(evt, e => {
+        e.preventDefault();
+        dz.classList.toggle("drag", evt === "dragover");
+      });
+    });
+    dz.addEventListener("drop", e => {
+      const f = e.dataTransfer.files[0];
+      if (f) handleFile(f);
+    });
+    input.addEventListener("change", e => {
+      const f = e.target.files[0];
+      if (f) handleFile(f);
+    });
+  }
+
+  async function handleFile(file) {
+    const statusEl = document.getElementById("uploadStatus");
+    statusEl.innerHTML = `<div class="status-line"><span class="spinner"></span>「${escapeHtml(file.name)}」を解析中…</div>`;
+    try {
+      let rows = [];
+      const ext = file.name.split(".").pop().toLowerCase();
+      if (["xlsx", "xls", "csv"].includes(ext)) {
+        rows = await parseExcelFile(file);
+      } else if (ext === "pdf") {
+        rows = await parsePdfFile(file);
+      } else {
+        throw new Error("対応していないファイル形式です");
+      }
+      if (!rows.length) throw new Error("店舗データを認識できませんでした。列構成をご確認ください。ヒント：1行目にヘッダー行（店舗名・住所など）があるか確認してください。");
+      state.rows = rows;
+      state.byPref = groupByPref(rows);
+
+      // 列認識結果を statusEl に表示してから遷移
+      const rpt = state.columnReport;
+      if (rpt) {
+        const nameTag  = rpt.nameFound ? rpt.headers[rpt.idx.name]  : null;
+        const addrTag  = rpt.addrFound ? rpt.headers[rpt.idx.addr]  : null;
+        const prefTag  = rpt.prefFound ? rpt.headers[rpt.idx.pref]  : "住所から自動判定";
+        const prefAutoCount = rows.filter(r => r.pref).length;
+        const prefUnkCount  = rows.filter(r => !r.pref).length;
+        statusEl.innerHTML = `
+          <div style="background:#F0FBF7;border:1px solid var(--teal);border-radius:8px;padding:11px 13px;font-size:12px;margin-top:10px;">
+            <div style="font-weight:700;margin-bottom:6px;color:var(--teal);">✓ ${escapeHtml(file.name)} を読み込みました（${rows.length}件）</div>
+            <div style="color:var(--slate);line-height:1.8;">
+              <span>店舗名：<b>${nameTag ? escapeHtml(nameTag) : '列なし（番号で代替）'}</b></span><br>
+              <span>住　所：<b>${addrTag ? escapeHtml(addrTag) : '自動検出'}</b></span><br>
+              <span>都道府県：<b>${escapeHtml(prefTag)}</b>${prefUnkCount > 0 ? ` （${prefUnkCount}件は不明グループ）` : ''}</span>
+            </div>
+          </div>
+        `;
+        setTimeout(() => render(), 1400);
+      } else {
+        render();
+      }
+    } catch (e) {
+      console.error(e);
+      statusEl.innerHTML = `<div class="errbox">読み込みに失敗しました：${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function renderPrefSelect() {
+    const prefs = Array.from(state.byPref.keys());
+    const chips = prefs.map(p => `
+      <div class="chip" data-pref="${escapeHtml(p)}">${escapeHtml(p)} <span class="n">${state.byPref.get(p).length}</span></div>
+    `).join("");
+    $main.innerHTML = `
+      <section class="panel">
+        <div class="eyebrow">Step 2 — 都道府県を選択</div>
+        <h2 class="title">どのエリアのルートを組みますか</h2>
+        <p class="help">全${state.rows.length}件を${prefs.length}都道府県に振り分けました。1つ選ぶと、出発地点（現在地または指定地点）からの訪問順を計算します。</p>
+        <div class="chip-grid">${chips}</div>
+      </section>
+      <section>
+        <button class="btn btn-ghost btn-block" id="resetBtn">別のファイルを読み込む</button>
+      </section>
+    `;
+    document.querySelectorAll(".chip").forEach(chip => {
+      chip.addEventListener("click", () => {
+        state.selectedPref = chip.dataset.pref;
+        render();
+      });
+    });
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      state.rows = []; state.byPref = new Map(); state.selectedPref = null; state.route = null;
+      state.startMode = "current"; state.customStart = null; state.customStartLabel = ""; state.searchResults = null;
+      render();
+    });
+  }
+
+  function renderPrefDetail() {
+    const list = state.byPref.get(state.selectedPref) || [];
+    const items = list.map(r => `
+      <li class="stop">
+        <div class="seq" style="background:var(--slate)">·</div>
+        <div class="body">
+          <div class="shop">${escapeHtml(r.name || r.addr || "(店舗名不明)")}</div>
+          <div class="addr">${escapeHtml(r.addr)}${r.note ? ` ・ ${escapeHtml(r.note)}` : ""}</div>
+        </div>
+      </li>
+    `).join("");
+
+    const mode = state.startMode;
+    const canStart = mode === "current" || !!state.customStart;
+    const startBtnLabel = mode === "current"
+      ? "現在地から開始してルートを計算"
+      : (state.customStart ? `「${escapeHtml(state.customStartLabel)}」から開始してルートを計算` : "出発地点を確認してください");
+
+    $main.innerHTML = `
+      <section class="panel">
+        <div class="eyebrow">${escapeHtml(state.selectedPref)} ・ ${list.length}件</div>
+        <h2 class="title">出発地点を選んでルートを計算</h2>
+        <p class="help">${list.length}店舗の住所を国土地理院APIで緯度経度に変換し、出発地点から移動距離が短くなる順番を計算します（車移動を想定）。</p>
+
+        <div class="eyebrow" style="margin-top:2px;">出発地点</div>
+        <div class="btn-row" style="margin-bottom:${mode === "custom" ? "10px" : "14px"}">
+          <button class="btn ${mode === "current" ? "btn-dark" : "btn-ghost"}" id="modeCurrentBtn">現在地</button>
+          <button class="btn ${mode === "custom" ? "btn-dark" : "btn-ghost"}" id="modeCustomBtn">地点を指定</button>
+        </div>
+        ${mode === "custom" ? renderCustomStartBlock() : ""}
+
+        <button class="btn btn-primary btn-block" id="startBtn" ${canStart ? "" : "disabled"}>${startBtnLabel}</button>
+        <div id="prefStatus"></div>
+      </section>
+      <section class="panel">
+        <h2 class="title" style="font-size:14px;">対象店舗一覧</h2>
+        <ul class="manifest">${items}</ul>
+      </section>
+      <section>
+        <button class="btn btn-ghost btn-block" id="backBtn">都道府県の選択に戻る</button>
+      </section>
+    `;
+    document.getElementById("backBtn").addEventListener("click", () => {
+      state.selectedPref = null; state.route = null; render();
+    });
+    document.getElementById("modeCurrentBtn").addEventListener("click", () => {
+      if (state.startMode !== "current") { state.startMode = "current"; state.searchResults = null; render(); }
+    });
+    document.getElementById("modeCustomBtn").addEventListener("click", () => {
+      if (state.startMode !== "custom") { state.startMode = "custom"; state.searchResults = null; render(); }
+    });
+    if (mode === "custom") bindCustomStartEvents();
+    document.getElementById("startBtn").addEventListener("click", runOptimization);
+  }
+
+  function renderCustomStartBlock() {
+    if (state.customStart) {
+      return `
+        <div class="file-pill" style="margin-bottom:10px;">
+          <div class="dot"></div>
+          <div class="name">${escapeHtml(state.customStartLabel)}</div>
+          <button id="changeStartBtn">変更</button>
+        </div>
+      `;
+    }
+    const resultsBlock = state.searchResults ? renderSearchResultsList() : "";
+    return `
+      <div style="margin-bottom:10px;">
+        <input type="text" class="text-input" id="customAddrInput" placeholder="住所・駅名・役所名など（例：都城市役所）">
+        <button class="btn btn-dark btn-block" id="resolveAddrBtn" style="margin-top:8px;">検索</button>
+        <p class="footnote" style="margin-top:6px;">国土地理院のデータベースで検索します。住所・駅・役所・主要施設の名称には対応していますが、コンビニ等の個別店舗名は登録されていないことがあります。見つからない場合は住所で入力してください。</p>
+        <div id="resolveStatus"></div>
+        ${resultsBlock}
+      </div>
+    `;
+  }
+
+  function renderSearchResultsList() {
+    if (!state.searchResults.length) {
+      return `<div class="errbox">該当する地点が見つかりませんでした。住所での入力をお試しください（例：市区町村名から番地まで）。</div>`;
+    }
+    const items = state.searchResults.map((r, i) => `
+      <div class="chip" data-idx="${i}" style="display:block; width:100%; border-radius:8px; margin-bottom:6px; text-align:left;">
+        ${escapeHtml(r.title)}
+      </div>
+    `).join("");
+    return `<div style="margin-top:10px;"><div class="eyebrow">候補（タップして選択）</div>${items}</div>`;
+  }
+
+  function bindCustomStartEvents() {
+    const changeBtn = document.getElementById("changeStartBtn");
+    if (changeBtn) {
+      changeBtn.addEventListener("click", () => {
+        state.customStart = null; state.customStartLabel = ""; state.searchResults = null; render();
+      });
+      return;
+    }
+    const resolveBtn = document.getElementById("resolveAddrBtn");
+    const input = document.getElementById("customAddrInput");
+    const doSearch = async () => {
+      const q = input.value.trim();
+      if (!q) return;
+      const statusEl = document.getElementById("resolveStatus");
+      statusEl.innerHTML = `<div class="status-line"><span class="spinner"></span>検索しています…</div>`;
+      resolveBtn.disabled = true;
+      try {
+        const results = await searchPlaces(q);
+        state.searchResults = results;
+        render();
+      } catch (e) {
+        statusEl.innerHTML = `<div class="errbox">検索に失敗しました：${escapeHtml(e.message)}</div>`;
+        resolveBtn.disabled = false;
+      }
+    };
+    resolveBtn.addEventListener("click", doSearch);
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); doSearch(); }
+    });
+    document.querySelectorAll("[data-idx]").forEach(el => {
+      el.addEventListener("click", () => {
+        const r = state.searchResults[Number(el.dataset.idx)];
+        state.customStart = { lat: r.lat, lon: r.lon };
+        state.customStartLabel = r.title;
+        state.searchResults = null;
+        render();
+      });
+    });
+  }
+
+  async function runOptimization() {
+    const statusEl = document.getElementById("prefStatus");
+    const startBtn = document.getElementById("startBtn");
+    startBtn.disabled = true;
+    const list = state.byPref.get(state.selectedPref) || [];
+
+    try {
+      let loc, label;
+      if (state.startMode === "custom") {
+        if (!state.customStart) throw new Error("出発地点を確認してください。");
+        loc = state.customStart;
+        label = state.customStartLabel;
+      } else {
+        statusEl.innerHTML = `<div class="status-line"><span class="spinner"></span>現在地を取得しています…</div>`;
+        loc = await getCurrentLocation();
+        label = "現在地";
+      }
+      state.currentLoc = loc;
+      state.startLabel = label;
+
+      statusEl.innerHTML = `
+        <div class="status-line"><span class="spinner"></span>住所を緯度経度に変換しています… <span class="mono" id="gcCount">0 / ${list.length}</span></div>
+        <div class="progress-track"><div class="progress-fill" id="gcBar" style="width:0%"></div></div>
+      `;
+      const geocoded = await geocodeAll(list, (done, total) => {
+        const pct = Math.round((done / total) * 100);
+        const bar = document.getElementById("gcBar");
+        const cnt = document.getElementById("gcCount");
+        if (bar) bar.style.width = pct + "%";
+        if (cnt) cnt.textContent = `${done} / ${total}`;
+      });
+
+      const valid = geocoded.filter(r => r.lat != null && r.lon != null);
+      const failed = geocoded.filter(r => r.lat == null);
+
+      if (!valid.length) {
+        statusEl.innerHTML = `<div class="errbox">すべての住所でジオコーディングに失敗しました。住所の表記をご確認ください。</div>`;
+        startBtn.disabled = false;
+        return;
+      }
+
+      statusEl.innerHTML = `<div class="status-line"><span class="spinner"></span>訪問順を計算しています…</div>`;
+      const route = buildRoute(loc, valid);
+
+      // OSRM で道路距離・所要時間を取得
+      statusEl.innerHTML = `<div class="status-line"><span class="spinner"></span>道路距離を取得しています…</div>`;
+      const roadLegs = await fetchRoadLegs(loc, route.stops);
+      if (roadLegs) {
+        let totalRoadKm = 0, totalRoadMin = 0;
+        route.stops = route.stops.map((s, i) => {
+          totalRoadKm += roadLegs[i].km;
+          totalRoadMin += roadLegs[i].min;
+          return { ...s, roadKm: roadLegs[i].km, roadMin: roadLegs[i].min };
+        });
+        route.totalRoadKm = totalRoadKm;
+        route.totalRoadMin = totalRoadMin;
+      }
+
+      state.route = { ...route, failed };
+      render();
+    } catch (e) {
+      console.error(e);
+      let msg = e.message || "不明なエラー";
+      if (e.code === 1) msg = "位置情報の利用が許可されませんでした。ブラウザの設定をご確認のうえ、再度お試しください。";
+      statusEl.innerHTML = `<div class="errbox">${escapeHtml(msg)}</div>`;
+      startBtn.disabled = false;
+    }
+  }
+
+  // ---------- 並び替え後にOSRM再取得 ----------
+  async function recalcRoadLegs() {
+    const stops = state.route.stops;
+    const statusEl = document.getElementById("roadStatus");
+    if (statusEl) statusEl.innerHTML = `<div class="status-line"><span class="spinner"></span>道路距離を再計算中…</div>`;
+    const roadLegs = await fetchRoadLegs(state.currentLoc, stops);
+    if (roadLegs) {
+      let totalRoadKm = 0, totalRoadMin = 0;
+      state.route.stops = stops.map((s, i) => {
+        totalRoadKm += roadLegs[i].km;
+        totalRoadMin += roadLegs[i].min;
+        return { ...s, roadKm: roadLegs[i].km, roadMin: roadLegs[i].min };
+      });
+      state.route.totalRoadKm = totalRoadKm;
+      state.route.totalRoadMin = totalRoadMin;
+      // 直線合計も再計算
+      let totalKm = 0;
+      let prev = state.currentLoc;
+      state.route.stops = state.route.stops.map(s => {
+        const d = haversine(prev.lat, prev.lon, s.lat, s.lon);
+        totalKm += d;
+        prev = s;
+        return { ...s, legKm: d };
+      });
+      state.route.totalKm = totalKm;
+    }
+    renderRouteResult();
+  }
+
+  function renderRouteResult() {
+    const { stops, totalKm, totalRoadKm, totalRoadMin, failed } = state.route;
+    const hasRoad = totalRoadKm != null;
+
+    // 各ストップHTML（ドラッグハンドル付き）
+    const stopItems = stops.map((s, i) => {
+      const roadBadge = s.roadKm != null
+        ? `<span class="road-badge">🚗 ${s.roadKm.toFixed(1)}km ${s.roadMin}分</span>`
+        : `<span class="road-badge loading">直線 ${s.legKm.toFixed(1)}km</span>`;
+      return `
+        <li class="stop" draggable="true" data-idx="${i}">
+          <div class="drag-handle" title="ドラッグして順番を変える">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <circle cx="4" cy="3" r="1.2" fill="currentColor"/>
+              <circle cx="4" cy="7" r="1.2" fill="currentColor"/>
+              <circle cx="4" cy="11" r="1.2" fill="currentColor"/>
+              <circle cx="10" cy="3" r="1.2" fill="currentColor"/>
+              <circle cx="10" cy="7" r="1.2" fill="currentColor"/>
+              <circle cx="10" cy="11" r="1.2" fill="currentColor"/>
+            </svg>
+          </div>
+          <div class="seq">${i + 1}</div>
+          <div class="body">
+            <div class="shop">${escapeHtml(s.name || s.addr || "(店舗名不明)")}</div>
+            <div class="addr">${escapeHtml(s.addr)}</div>
+            <div class="meta">
+              ${roadBadge}
+              ${s.note ? `<span class="warn">${escapeHtml(s.note)}</span>` : ""}
+            </div>
+          </div>
+        </li>`;
+    }).join("");
+
+    const failedBlock = failed && failed.length ? `
+      <section class="panel">
+        <div class="eyebrow">⚠ 変換できなかった${failed.length}件</div>
+        <p class="help" style="margin-bottom:8px;">住所の表記ゆれなどで位置を特定できませんでした。ルートには含まれていません。</p>
+        <ul class="manifest">
+          ${failed.map(r => `<li class="stop"><div class="seq" style="background:var(--orange-deep)">!</div><div class="body"><div class="shop">${escapeHtml(r.name || r.addr || "")}</div><div class="addr">${escapeHtml(r.addr)}</div></div></li>`).join("")}
+        </ul>
+      </section>
+    ` : "";
+
+    const summaryRoad = hasRoad
+      ? `<div class="stat"><div class="val">${totalRoadKm.toFixed(1)}</div><div class="lbl">道路距離(km)</div></div>
+         <div class="stat"><div class="val">${totalRoadMin}</div><div class="lbl">合計時間(分)</div></div>`
+      : `<div class="stat"><div class="val">${totalKm.toFixed(1)}</div><div class="lbl">直線距離(km)</div></div>
+         <div class="stat"><div class="val">${(totalKm / 40 * 60).toFixed(0)}</div><div class="lbl">概算分(40km/h)</div></div>`;
+
+    $main.innerHTML = `
+      <section class="panel">
+        <div class="eyebrow">${escapeHtml(state.selectedPref)} ・ 最適化済みルート</div>
+        <h2 class="title">${escapeHtml(state.startLabel)}から${stops.length}店舗</h2>
+        <div class="summary">
+          <div class="stat"><div class="val">${stops.length}</div><div class="lbl">訪問件数</div></div>
+          ${summaryRoad}
+        </div>
+        <p class="footnote">${hasRoad ? "※道路距離・所要時間はOSRM（OpenStreetMap）による概算です。実際の交通状況とは異なります。" : "※距離は直線距離の概算です。"}</p>
+      </section>
+
+      <section class="panel">
+        <div id="map"></div>
+        <a class="btn btn-dark maplink" id="gmapsBtn" target="_blank" rel="noopener" style="margin-top:12px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.5-7-11a7 7 0 1114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+          この順番でGoogleマップを開く（運転）
+        </a>
+      </section>
+
+      <section class="panel">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <h2 class="title" style="font-size:14px;margin:0;">訪問順マニフェスト</h2>
+          <span style="font-size:11px;color:var(--slate);">☰ ドラッグで並び替え</span>
+        </div>
+        <div id="roadStatus"></div>
+        <ul class="manifest" id="stopList">
+          <li class="stop start">
+            <div class="ping"><div class="core">●</div></div>
+            <div class="body">
+              <div class="shop">${escapeHtml(state.startLabel)}（出発点）</div>
+              <div class="addr">${state.startMode === "current" ? "GPS取得位置" : escapeHtml(state.customStartLabel)}</div>
+            </div>
+          </li>
+          ${stopItems}
+        </ul>
+      </section>
+
+      ${failedBlock}
+
+      <section class="btn-row">
+        <button class="btn btn-ghost" id="recalcBtn">出発地点を変えて再計算</button>
+        <button class="btn btn-ghost" id="backBtn2">別の都道府県へ</button>
+      </section>
+    `;
+
+    document.getElementById("backBtn2").addEventListener("click", () => {
+      state.selectedPref = null; state.route = null; render();
+    });
+    document.getElementById("recalcBtn").addEventListener("click", () => {
+      state.route = null; render();
+    });
+
+    const gmapsUrl = buildGoogleMapsUrl(state.currentLoc, stops);
+    document.getElementById("gmapsBtn").href = gmapsUrl;
+
+    drawMap(state.currentLoc, stops, state.startLabel);
+    bindDragSort();
+  }
+
+  // ---------- ドラッグ＆ドロップ並び替え ----------
+  function bindDragSort() {
+    const list = document.getElementById("stopList");
+    if (!list) return;
+    let dragIdx = null;
+    let overIdx = null;
+
+    list.querySelectorAll("li[data-idx]").forEach(el => {
+      // PC: drag events
+      el.addEventListener("dragstart", e => {
+        dragIdx = Number(el.dataset.idx);
+        setTimeout(() => el.classList.add("dragging"), 0);
+        e.dataTransfer.effectAllowed = "move";
+      });
+      el.addEventListener("dragend", () => {
+        el.classList.remove("dragging");
+        list.querySelectorAll(".drag-over").forEach(e => e.classList.remove("drag-over"));
+        if (dragIdx !== null && overIdx !== null && dragIdx !== overIdx) {
+          applyReorder(dragIdx, overIdx);
+        }
+        dragIdx = null; overIdx = null;
+      });
+      el.addEventListener("dragover", e => {
+        e.preventDefault();
+        list.querySelectorAll(".drag-over").forEach(e2 => e2.classList.remove("drag-over"));
+        el.classList.add("drag-over");
+        overIdx = Number(el.dataset.idx);
+      });
+
+      // タッチデバイス対応
+      const handle = el.querySelector(".drag-handle");
+      if (!handle) return;
+      let touchStartY = 0;
+      let touchDragIdx = null;
+
+      handle.addEventListener("touchstart", e => {
+        touchStartY = e.touches[0].clientY;
+        touchDragIdx = Number(el.dataset.idx);
+        el.classList.add("dragging");
+        e.preventDefault();
+      }, { passive: false });
+
+      handle.addEventListener("touchmove", e => {
+        e.preventDefault();
+        const y = e.touches[0].clientY;
+        list.querySelectorAll(".drag-over").forEach(e2 => e2.classList.remove("drag-over"));
+        const target = document.elementFromPoint(e.touches[0].clientX, y);
+        const targetLi = target && target.closest("li[data-idx]");
+        if (targetLi) {
+          targetLi.classList.add("drag-over");
+          overIdx = Number(targetLi.dataset.idx);
+        }
+      }, { passive: false });
+
+      handle.addEventListener("touchend", () => {
+        el.classList.remove("dragging");
+        list.querySelectorAll(".drag-over").forEach(e2 => e2.classList.remove("drag-over"));
+        if (touchDragIdx !== null && overIdx !== null && touchDragIdx !== overIdx) {
+          applyReorder(touchDragIdx, overIdx);
+        }
+        touchDragIdx = null; overIdx = null;
+      });
+    });
+  }
+
+  function applyReorder(fromIdx, toIdx) {
+    const stops = [...state.route.stops];
+    const [moved] = stops.splice(fromIdx, 1);
+    stops.splice(toIdx, 0, moved);
+    // 直線距離を再計算
+    let total = 0;
+    let prev = state.currentLoc;
+    state.route.stops = stops.map(s => {
+      const d = haversine(prev.lat, prev.lon, s.lat, s.lon);
+      total += d; prev = s;
+      return { ...s, legKm: d };
+    });
+    state.route.totalKm = total;
+    state.route.totalRoadKm = null;
+    state.route.totalRoadMin = null;
+    renderRouteResult();
+    // 並び替え後にOSRM再取得
+    recalcRoadLegs();
+  }
+
+  function drawMap(start, stops, startLabel) {
+    requestAnimationFrame(() => {
+      if (state.map) { state.map.remove(); state.map = null; }
+      const map = L.map("map", { zoomControl: true, attributionControl: true });
+      L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png", {
+        attribution: "地図: 国土地理院", maxZoom: 18
+      }).addTo(map);
+
+      const latlngs = [[start.lat, start.lon], ...stops.map(s => [s.lat, s.lon])];
+
+      const startIcon = L.divIcon({
+        className: "", html: `<div style="width:18px;height:18px;border-radius:50%;background:#1F2A24;border:3px solid #fff;box-shadow:0 0 0 2px #1F2A24;"></div>`,
+        iconSize: [18, 18], iconAnchor: [9, 9]
+      });
+      L.marker([start.lat, start.lon], { icon: startIcon }).addTo(map).bindPopup(`${escapeHtml(startLabel)}（出発点）`);
+
+      stops.forEach((s, i) => {
+        const icon = L.divIcon({
+          className: "", html: `<div style="width:24px;height:24px;border-radius:50%;background:${i === 0 ? '#E8622C' : '#2D6E5E'};color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;border:2px solid #fff;">${i + 1}</div>`,
+          iconSize: [24, 24], iconAnchor: [12, 12]
+        });
+        L.marker([s.lat, s.lon], { icon }).addTo(map).bindPopup(`${i + 1}. ${escapeHtml(s.name || s.addr || "")}`);
+      });
+
+      L.polyline(latlngs, { color: "#2D6E5E", weight: 3, opacity: 0.7, dashArray: "6,6" }).addTo(map);
+      map.fitBounds(L.latLngBounds(latlngs), { padding: [24, 24] });
+      state.map = map;
+    });
+  }
+
+  render();
+})();
+
+</script>
+</body>
+</html>
